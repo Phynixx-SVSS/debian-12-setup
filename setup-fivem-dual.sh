@@ -3,14 +3,19 @@
 # Ausfuehren als root: sudo bash setup-fivem-dual.sh
 set -Eeuo pipefail
 
-BASE_DIR="/opt/fivem"
-RUN_USER="fivem"
+INSTALL_USER="${SUDO_USER:-}"
+[[ -n "$INSTALL_USER" ]] || { echo "Bitte als normaler Benutzer mit sudo starten, nicht direkt als root." >&2; exit 1; }
+INSTALL_HOME="$(getent passwd "$INSTALL_USER" | cut -d: -f6)"
+[[ -n "$INSTALL_HOME" && -d "$INSTALL_HOME" ]] || { echo "Home-Verzeichnis von $INSTALL_USER wurde nicht gefunden." >&2; exit 1; }
+RUN_USER="$INSTALL_USER"
+RUN_GROUP="$(id -gn "$RUN_USER")"
+BASE_DIR="$INSTALL_HOME/fivem"
 ARTIFACT_DIR="$BASE_DIR/artifacts"
 ARTIFACT_URL="https://runtime.fivem.net/artifacts/fivem/build_proot_linux/master/latest/fx.tar.xz"
-CREDENTIALS_FILE="/root/fivem-install-credentials.txt"
+CREDENTIALS_FILE="$BASE_DIR/install-credentials.txt"
 
 fail() { echo "Fehler: $*" >&2; exit 1; }
-[[ $EUID -eq 0 ]] || fail "Bitte als root ausfuehren: sudo bash $0"
+[[ $EUID -eq 0 ]] || fail "Bitte mit sudo ausfuehren: sudo bash $0"
 [[ -f /etc/debian_version ]] || fail "Dieses Skript ist fuer Debian vorgesehen."
 
 read -r -p "Wie viele FiveM-Server sollen angelegt werden? " INSTANCE_COUNT
@@ -50,10 +55,7 @@ EOF
 a2enconf phpmyadmin fivem-phpmyadmin-local
 systemctl reload apache2
 
-if ! id -u "$RUN_USER" >/dev/null 2>&1; then
-  useradd --system --create-home --home-dir "$BASE_DIR" --shell /usr/sbin/nologin "$RUN_USER"
-fi
-install -d -o "$RUN_USER" -g "$RUN_USER" -m 0755 "$ARTIFACT_DIR"
+install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0755 "$BASE_DIR" "$ARTIFACT_DIR"
 
 if [[ ! -x "$ARTIFACT_DIR/run.sh" ]]; then
   echo "Lade aktuelles FiveM-Linux-Artifact herunter ..."
@@ -63,7 +65,7 @@ if [[ ! -x "$ARTIFACT_DIR/run.sh" ]]; then
   tar -xJf "$archive" -C "$ARTIFACT_DIR"
   rm -f "$archive"
   trap - EXIT
-  chown -R "$RUN_USER:$RUN_USER" "$ARTIFACT_DIR"
+  chown -R "$RUN_USER:$RUN_GROUP" "$ARTIFACT_DIR"
   chmod 0755 "$ARTIFACT_DIR/run.sh"
 fi
 
@@ -85,13 +87,13 @@ for ((i=0; i<INSTANCE_COUNT; i++)); do
   instance_dir="$BASE_DIR/$name"; data_dir="$instance_dir/server-data"; txdata_dir="$instance_dir/txData"
   db_name="fivem_${name//-/_}"; db_user="$db_name"; db_password="$(openssl rand -hex 24)"
 
-  install -d -o "$RUN_USER" -g "$RUN_USER" -m 0750 "$instance_dir" "$txdata_dir" "$instance_dir/logs"
+  install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0750 "$instance_dir" "$txdata_dir" "$instance_dir/logs"
   # Ausschliesslich offizielle FiveM-Standardressourcen, keine RP-Frameworks.
   if [[ ! -e "$data_dir" ]]; then
     git clone --depth 1 https://github.com/citizenfx/cfx-server-data.git "$data_dir"
-    chown -R "$RUN_USER:$RUN_USER" "$data_dir"
+    chown -R "$RUN_USER:$RUN_GROUP" "$data_dir"
   else
-    install -d -o "$RUN_USER" -g "$RUN_USER" -m 0750 "$data_dir/resources"
+    install -d -o "$RUN_USER" -g "$RUN_GROUP" -m 0750 "$data_dir/resources"
   fi
 
   cat >"$data_dir/server.cfg" <<EOF
@@ -110,7 +112,7 @@ ensure hardcap
 ensure rconlog
 # Eigene Ressourcen spaeter hier eintragen, z. B.: ensure mein_script
 EOF
-  chown "$RUN_USER:$RUN_USER" "$data_dir/server.cfg"; chmod 0640 "$data_dir/server.cfg"
+  chown "$RUN_USER:$RUN_GROUP" "$data_dir/server.cfg"; chmod 0640 "$data_dir/server.cfg"
 
   cat >"$BASE_DIR/start-$name.sh" <<EOF
 #!/usr/bin/env bash
@@ -121,7 +123,7 @@ exec ./run.sh \\
   +set txDataPath "$txdata_dir" \\
   +set serverProfile "$name"
 EOF
-  chown "$RUN_USER:$RUN_USER" "$BASE_DIR/start-$name.sh"; chmod 0750 "$BASE_DIR/start-$name.sh"
+  chown "$RUN_USER:$RUN_GROUP" "$BASE_DIR/start-$name.sh"; chmod 0750 "$BASE_DIR/start-$name.sh"
 
   cat >"/etc/systemd/system/fivem-$name.service" <<EOF
 [Unit]
@@ -132,7 +134,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$RUN_USER
-Group=$RUN_USER
+Group=$RUN_GROUP
 WorkingDirectory=$ARTIFACT_DIR
 ExecStart=$BASE_DIR/start-$name.sh
 Restart=on-failure
@@ -163,6 +165,7 @@ EOF
 done
 
 chmod 0600 "$CREDENTIALS_FILE"
+chown "$RUN_USER:$RUN_GROUP" "$CREDENTIALS_FILE"
 systemctl daemon-reload
 for name in "${NAMES[@]}"; do systemctl enable --now "fivem-$name.service"; done
 
