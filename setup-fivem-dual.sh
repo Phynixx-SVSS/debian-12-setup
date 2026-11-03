@@ -11,7 +11,9 @@ RUN_USER="$INSTALL_USER"
 RUN_GROUP="$(id -gn "$RUN_USER")"
 BASE_DIR="$INSTALL_HOME/fivem"
 ARTIFACT_DIR="$BASE_DIR/artifacts"
-ARTIFACT_URL="https://runtime.fivem.net/artifacts/fivem/build_proot_linux/master/latest/fx.tar.xz"
+# Cfx.re veroeffentlicht keine verlaessliche /latest-Datei fuer Linux.
+# Diese URL verweist auf den aktuell empfohlenen, konkret veroeffentlichten Linux-Build.
+ARTIFACT_URL="https://runtime.fivem.net/artifacts/fivem/build_proot_linux/master/35245-6efb47dff473c0e2a12fb50b08d74c0eb24a50d5/fx.tar.xz"
 CREDENTIALS_FILE="$BASE_DIR/install-credentials.txt"
 
 fail() { echo "Fehler: $*" >&2; exit 1; }
